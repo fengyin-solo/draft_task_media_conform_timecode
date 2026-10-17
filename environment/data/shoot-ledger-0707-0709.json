@@ -1,0 +1,65 @@
+{
+  "A017C012_260712_R1AB": {
+    "fps": {
+      "numerator": 30000,
+      "denominator": 1001
+    },
+    "timecode_base": "drop-frame",
+    "start_timecode": "01:00:00;00",
+    "duration_frames": 108000
+  },
+  "B039D017_251122_R2C": {
+    "fps": {
+      "numerator": 25,
+      "denominator": 1
+    },
+    "timecode_base": "non-drop-frame",
+    "start_timecode": "02:00:00:00",
+    "duration_frames": 90000
+  },
+  "C104E003_260411_R1AD": {
+    "fps": {
+      "numerator": 24,
+      "denominator": 1
+    },
+    "timecode_base": "non-drop-frame",
+    "start_timecode": "09:00:00:00",
+    "duration_frames": 180000
+  },
+  "D221F009_260218_R3": {
+    "fps": {
+      "numerator": 24000,
+      "denominator": 1001
+    },
+    "timecode_base": "non-drop-frame",
+    "start_timecode": "03:00:00:00",
+    "duration_frames": 240000
+  },
+  "E008B021_251105_R1AA": {
+    "fps": {
+      "numerator": 60000,
+      "denominator": 1001
+    },
+    "timecode_base": "drop-frame",
+    "start_timecode": "12:00:00;00",
+    "duration_frames": 216000
+  },
+  "F310H014_260303_R1": {
+    "fps": {
+      "numerator": 30000,
+      "denominator": 1001
+    },
+    "timecode_base": "drop-frame",
+    "start_timecode": "23:58:00;02",
+    "duration_frames": 12000
+  },
+  "G002K006_260125_R1AC": {
+    "fps": {
+      "numerator": 24,
+      "denominator": 1
+    },
+    "timecode_base": "non-drop-frame",
+    "start_timecode": "14:00:00:00",
+    "duration_frames": 140000
+  }
+}

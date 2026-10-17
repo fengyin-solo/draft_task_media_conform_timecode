@@ -753,6 +753,36 @@ def test_rejects_timecode_field_out_of_range(tmp_path):
     assert not out.exists()
 
 
+def test_rejects_frame_number_equal_to_nominal_rate(tmp_path):
+    """题面「四个时码写成 HH:MM:SS:FF」：帧位等于每秒整格数时越界。"""
+    ledger = {MAIN: _flat_reel(NON_DROP, "01:00:00:00", 500000)}
+    table = _table(
+        "FRAME-EQUAL-RATE",
+        FLAT24_TABLE,
+        "NON-DROP-FRAME",
+        [_single_row("001", MAIN, "01:02:30:24", "01:02:35:24", "02:00:00:00", "02:00:05:00")],
+    )
+    result, out, _journal = _run(tmp_path, "frame-equal-rate", table, ledger)
+    assert result.returncode != 0
+    assert not out.exists()
+
+
+def test_rejects_zero_timeline_rate_without_traceback(tmp_path):
+    """题面「时间线声明的帧率分子为零」：按数据不合规退回，不以异常栈收场。"""
+    ledger = {MAIN: _flat_reel(NON_DROP, "01:00:00:00", 500000)}
+    table = _table(
+        "ZERO-TIMELINE-RATE",
+        "0/1",
+        "NON-DROP-FRAME",
+        [_single_row("001", MAIN, "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
+    )
+    result, out, _journal = _run(tmp_path, "zero-timeline-rate", table, ledger)
+    assert result.returncode != 0
+    assert "帧率" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert not out.exists()
+
+
 def test_rejects_timecode_the_device_never_writes(tmp_path):
     """题面「剪辑表和台账上冒出设备不会写的帧号」：丢帧卷上被跳过的帧号整份退回。"""
     ledger = {MAIN: _drop_reel("01:00:00;00", 200000)}

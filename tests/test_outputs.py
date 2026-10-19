@@ -1,5 +1,6 @@
 """行为验收：套底机房的剪辑表归算与回批清单契约。"""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -62,9 +63,14 @@ def _place(root, name, text):
     return path
 
 
-def _call(tmp_path, tag, edl_path, ledger_path, journal=None):
-    out = tmp_path / (tag + "-out") / "conform-list.json"
-    journal_path = journal if journal is not None else tmp_path / (tag + "-journal.tsv")
+def _case_tag(tag):
+    return "case-" + hashlib.sha256(tag.encode("utf-8")).hexdigest()[:12]
+
+
+def _call(tmp_path, tag, edl_path, ledger_path, journal=None, out=None):
+    case = _case_tag(tag)
+    out = out if out is not None else tmp_path / (case + "-out") / "conform-list.json"
+    journal_path = journal if journal is not None else tmp_path / (case + "-journal.tsv")
     result = subprocess.run(
         [sys.executable, str(APP), str(edl_path), str(ledger_path), str(out), str(journal_path)],
         capture_output=True,
@@ -74,10 +80,11 @@ def _call(tmp_path, tag, edl_path, ledger_path, journal=None):
     return result, out, journal_path
 
 
-def _run(tmp_path, tag, table, ledger, journal=None):
-    edl_path = _place(tmp_path, tag + ".edl", table)
-    ledger_path = _place(tmp_path, tag + "-ledger.json", json.dumps(ledger, ensure_ascii=False, indent=2) + "\n")
-    return _call(tmp_path, tag, edl_path, ledger_path, journal)
+def _run(tmp_path, tag, table, ledger, journal=None, out=None):
+    case = _case_tag(tag)
+    edl_path = _place(tmp_path, case + ".edl", table)
+    ledger_path = _place(tmp_path, case + "-ledger.json", json.dumps(ledger, ensure_ascii=False, indent=2) + "\n")
+    return _call(tmp_path, case, edl_path, ledger_path, journal, out=out)
 
 
 def _shipped(tmp_path, tag, table_name, journal=None):
@@ -101,7 +108,7 @@ def test_drop_frame_minute_boundary_skips_two_frame_numbers(tmp_path):
         "DROP-FRAME",
         [_single_row("001", MAIN, "01:06:59;29", "01:07:00;02", "01:00:00;00", "01:00:00;01")],
     )
-    result, out, _journal = _run(tmp_path, "minute", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-01", table, ledger)
     assert result.returncode == 0, result.stderr
     entry = _list_of(out)["entries"][0]
     assert entry["src_in_frame"] == 12587
@@ -117,7 +124,7 @@ def test_drop_frame_tenth_minute_keeps_consecutive_frame_numbers(tmp_path):
         "DROP-FRAME",
         [_single_row("001", MAIN, "01:09:59;29", "01:10:00;00", "01:00:00;00", "01:00:00;01")],
     )
-    result, out, _journal = _run(tmp_path, "tenmin", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-02", table, ledger)
     assert result.returncode == 0, result.stderr
     entry = _list_of(out)["entries"][0]
     assert entry["src_in_frame"] == 17981
@@ -133,7 +140,7 @@ def test_sixty_hertz_basis_counts_dropped_frames_for_sixty(tmp_path):
         "DROP-FRAME",
         [_single_row("001", HI, "01:00:59;59", "01:01:00;04", "01:00:00;00", "01:00:00;01")],
     )
-    result, out, _journal = _run(tmp_path, "hi60", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-03", table, ledger)
     assert result.returncode == 0, result.stderr
     entry = _list_of(out)["entries"][0]
     assert entry["src_in_frame"] == 3599
@@ -151,7 +158,7 @@ def test_cross_midnight_event_keeps_counting_source_frames(tmp_path):
         "DROP-FRAME",
         [_single_row("001", NIGHT, "23:59:58;02", "00:00:12;02", "01:00:00;00", "01:00:14;00")],
     )
-    result, out, _journal = _run(tmp_path, "night", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-04", table, ledger)
     assert result.returncode == 0, result.stderr
     entry = _list_of(out)["entries"][0]
     assert entry["src_in_frame"] == 3538
@@ -168,7 +175,7 @@ def test_frame_numbers_accumulate_dropped_frames_over_many_minutes(tmp_path):
         "DROP-FRAME",
         [_single_row("001", LATE, "05:12:34;17", "05:13:14;19", "01:00:00;00", "01:00:40;00")],
     )
-    result, out, _journal = _run(tmp_path, "minutes", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-05", table, ledger)
     assert result.returncode == 0, result.stderr
     entry = _list_of(out)["entries"][0]
     assert entry["src_in_frame"] == 22615
@@ -188,7 +195,7 @@ def test_mixed_basis_list_converts_each_reel_in_its_own_base(tmp_path):
         ],
     )
     ledger[FLAT_REEL]["timecode_base"] = NON_DROP
-    result, out, _journal = _run(tmp_path, "mixbasis", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-06", table, ledger)
     assert result.returncode == 0, result.stderr
     entries = _list_of(out)["entries"]
     assert [entry["src_in_frame"] for entry in entries] == [17984, 9000]
@@ -205,7 +212,7 @@ def test_pulled_source_duration_follows_its_own_frame_rate(tmp_path):
         "DROP-FRAME",
         [_single_row("001", PULL_REEL, "03:02:30:00", "03:02:40:00", "01:00:00;00", "01:00:10;00")],
     )
-    result, out, _journal = _run(tmp_path, "pull", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-07", table, ledger)
     assert result.returncode == 0, result.stderr
     entry = _list_of(out)["entries"][0]
     assert entry["src_in_frame"] == 3600
@@ -223,7 +230,7 @@ def test_twentyfour_source_on_drop_timeline_bridges_through_elapsed_time(tmp_pat
         "DROP-FRAME",
         [_single_row("001", MAIN, "09:35:00:00", "09:35:41:17", "01:00:00;00", "01:00:41;20")],
     )
-    result, out, _journal = _run(tmp_path, "flat24", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-08", table, ledger)
     assert result.returncode == 0, result.stderr
     entry = _list_of(out)["entries"][0]
     assert entry["src_in_frame"] == 50400
@@ -241,7 +248,7 @@ def test_twentyfive_source_on_twentyfour_timeline_bridges_through_elapsed_time(t
         "NON-DROP-FRAME",
         [_single_row("001", PAL_REEL, "02:20:00:00", "02:20:05:00", "02:00:00:00", "02:00:05:00")],
     )
-    result, out, _journal = _run(tmp_path, "pal25", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-09", table, ledger)
     assert result.returncode == 0, result.stderr
     entry = _list_of(out)["entries"][0]
     assert entry["src_in_frame"] == 30000
@@ -253,7 +260,7 @@ def test_twentyfive_source_on_twentyfour_timeline_bridges_through_elapsed_time(t
 
 def test_total_seconds_sums_exact_durations_before_rounding(tmp_path):
     """题面「长清单上先把每条时长掐到六位再加，末尾会和账差出来」：合计按没掐位的时长累加。"""
-    result, out, _journal = _shipped(tmp_path, "online-total", ONLINE_B)
+    result, out, _journal = _shipped(tmp_path, "case-10", ONLINE_B)
     assert result.returncode == 0, result.stderr
     payload = _list_of(out)
     assert payload["total_seconds"] == "205.838967"
@@ -263,7 +270,7 @@ def test_total_seconds_sums_exact_durations_before_rounding(tmp_path):
 
 def test_shipped_online_sample_matches_expected_entries(tmp_path):
     """题面「素材侧走过 125 帧，记录侧走过 120 帧」：随题交付的混合帧率剪辑表整套归算结果逐项对得上。"""
-    result, out, _journal = _shipped(tmp_path, "online", ONLINE_B)
+    result, out, _journal = _shipped(tmp_path, "case-11", ONLINE_B)
     assert result.returncode == 0, result.stderr
     payload = _list_of(out)
     assert payload["title"] == "0708B-PROMO-ONLINE"
@@ -295,14 +302,14 @@ def test_rejects_events_whose_two_sides_disagree_in_elapsed_time(tmp_path):
     out = tmp_path / "mismatch-out" / "conform-list.json"
     out.parent.mkdir(parents=True)
     out.write_bytes(b"OLD-LIST\n")
-    result, out_path, _journal = _run(tmp_path, "mismatch", table, ledger)
+    result, out_path, _journal = _run(tmp_path, "case-12", table, ledger, out=out)
     assert result.returncode != 0
     assert out_path.read_bytes() == b"OLD-LIST\n"
 
 
 def test_shipped_cut_a_sample_matches_expected_entries(tmp_path):
     """题面「`source_frames` 是所有事件源侧帧数的合计」：随题交付的整帧率短片整套归算结果对得上。"""
-    result, out, _journal = _shipped(tmp_path, "cut-a", CUT_A)
+    result, out, _journal = _shipped(tmp_path, "case-13", CUT_A)
     assert result.returncode == 0, result.stderr
     payload = _list_of(out)
     assert payload["title"] == "0707A-PROMO-CUT2"
@@ -313,7 +320,7 @@ def test_shipped_cut_a_sample_matches_expected_entries(tmp_path):
 
 def test_list_is_one_compact_line_with_a_trailing_newline(tmp_path):
     """题面「清单是一行紧凑 JSON，分隔符后面不加空格，末尾补一个换行」：清单的写法。"""
-    result, out, _journal = _shipped(tmp_path, "shape", ONLINE_B)
+    result, out, _journal = _shipped(tmp_path, "case-14", ONLINE_B)
     assert result.returncode == 0, result.stderr
     raw = out.read_text(encoding="utf-8")
     assert raw == json.dumps(json.loads(raw), ensure_ascii=False, separators=(",", ":")) + "\n"
@@ -321,7 +328,7 @@ def test_list_is_one_compact_line_with_a_trailing_newline(tmp_path):
 
 def test_list_field_order_is_fixed(tmp_path):
     """题面「顶层键按 `title`、`event_count`、`entries`、`source_frames`、`timeline_frames`、`total_seconds` 的次序排下来」：清单的键序。"""
-    result, out, _journal = _shipped(tmp_path, "keys", ONLINE_B)
+    result, out, _journal = _shipped(tmp_path, "case-15", ONLINE_B)
     assert result.returncode == 0, result.stderr
     payload = _list_of(out)
     assert list(payload) == ["title", "event_count", "entries", "source_frames", "timeline_frames", "total_seconds"]
@@ -342,7 +349,7 @@ def test_list_field_order_is_fixed(tmp_path):
 
 def test_source_timecodes_in_list_carry_drop_frame_separators(tmp_path):
     """题面「`src_in` 与 `src_out` 写在素材自己的基准上」：丢帧卷的源侧时码带分号，整帧卷的用冒号。"""
-    result, out, _journal = _shipped(tmp_path, "src-mark", ONLINE_B)
+    result, out, _journal = _shipped(tmp_path, "case-16", ONLINE_B)
     assert result.returncode == 0, result.stderr
     entries = _list_of(out)["entries"]
     assert entries[0]["src_in"] == "01:11:57;20"
@@ -360,7 +367,7 @@ def test_record_timecodes_in_list_carry_drop_frame_separators(tmp_path):
         "DROP-FRAME",
         [_single_row("001", MAIN, "01:10:00;02", "01:10:30;02", "01:00:00;00", "01:00:30;00")],
     )
-    result, out, _journal = _run(tmp_path, "record-mark", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-17", table, ledger)
     assert result.returncode == 0, result.stderr
     entry = _list_of(out)["entries"][0]
     assert entry["rec_in"] == "01:00:00;00"
@@ -380,7 +387,7 @@ def test_list_entries_keep_editing_table_order_and_numbers(tmp_path):
             _single_row("002", MAIN, "01:20:00:00", "01:20:07:00", "02:00:08:12", "02:00:15:12"),
         ],
     )
-    result, out, _journal = _run(tmp_path, "order", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-18", table, ledger)
     assert result.returncode == 0, result.stderr
     payload = _list_of(out)
     assert [entry["event"] for entry in payload["entries"]] == [4, 9, 2]
@@ -400,7 +407,7 @@ def test_list_records_event_count_and_frame_totals(tmp_path):
             _single_row("002", MAIN, "01:20:00:00", "01:20:07:00", "02:00:08:12", "02:00:15:12"),
         ],
     )
-    result, out, _journal = _run(tmp_path, "totals", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-19", table, ledger)
     assert result.returncode == 0, result.stderr
     payload = _list_of(out)
     assert payload["event_count"] == 3
@@ -421,7 +428,7 @@ def test_continuous_timeline_frame_numbers_stay_unchanged(tmp_path):
             _single_row("002", MAIN, "01:10:00:00", "01:10:02:12", "02:00:05:00", "02:00:07:12"),
         ],
     )
-    result, out, _journal = _run(tmp_path, "simple24", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-20", table, ledger)
     assert result.returncode == 0, result.stderr
     entries = _list_of(out)["entries"]
     assert [entry["rec_in_frame"] for entry in entries] == [172800, 172920]
@@ -443,7 +450,7 @@ def test_failed_run_keeps_previous_list_and_journal(tmp_path):
     journal = tmp_path / "keep-journal.tsv"
     journal.write_bytes(b"JOB KEEP-BOTH\n004\tC012K004_260702_R1A\t01:02:30:00\t01:02:35:00\t02:00:00:00\t02:00:05:00\t5.000000\n")
     before = journal.read_bytes()
-    result, out_path, journal_path = _run(tmp_path, "keep", table, ledger, journal=journal)
+    result, out_path, journal_path = _run(tmp_path, "case-21", table, ledger, journal=journal, out=out)
     assert result.returncode != 0
     assert out_path.read_bytes() == b"PREVIOUS-LIST\n"
     assert journal_path.read_bytes() == before
@@ -461,7 +468,7 @@ def test_unwritable_destination_leaves_no_staging_file(tmp_path):
     out = tmp_path / "blocked-out" / "conform-list.json"
     out.mkdir(parents=True)
     journal = tmp_path / "blocked-journal.tsv"
-    result, out_path, journal_path = _run(tmp_path, "blocked", table, ledger, journal=journal)
+    result, out_path, journal_path = _run(tmp_path, "case-22", table, ledger, journal=journal, out=out)
     assert result.returncode != 0
     assert sorted(item.name for item in out_path.parent.iterdir()) == ["conform-list.json"]
     assert out_path.is_dir()
@@ -477,8 +484,8 @@ def test_repeated_runs_write_the_same_list(tmp_path):
         "NON-DROP-FRAME",
         [_single_row("001", MAIN, "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
-    first, first_out, _first_journal = _run(tmp_path, "repeat-a", table, ledger)
-    second, second_out, _second_journal = _run(tmp_path, "repeat-b", table, ledger)
+    first, first_out, _first_journal = _run(tmp_path, "case-23", table, ledger)
+    second, second_out, _second_journal = _run(tmp_path, "case-24", table, ledger)
     assert first.returncode == 0, first.stderr
     assert second.returncode == 0, second.stderr
     assert first_out.read_bytes() == second_out.read_bytes()
@@ -494,9 +501,9 @@ def test_repeated_runs_do_not_journal_the_same_events_twice(tmp_path):
         [_single_row("001", MAIN, "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
     journal = tmp_path / "repeat-journal.tsv"
-    first, _first_out, journal_path = _run(tmp_path, "repeat-j1", table, ledger, journal=journal)
+    first, _first_out, journal_path = _run(tmp_path, "case-25", table, ledger, journal=journal)
     after_first = journal_path.read_bytes()
-    second, _second_out, _journal_path = _run(tmp_path, "repeat-j2", table, ledger, journal=journal)
+    second, _second_out, _journal_path = _run(tmp_path, "case-26", table, ledger, journal=journal)
     assert first.returncode == 0, first.stderr
     assert second.returncode == 0, second.stderr
     assert journal_path.read_bytes() == after_first
@@ -511,7 +518,7 @@ def test_fresh_journal_starts_with_the_job_head_line(tmp_path):
         "NON-DROP-FRAME",
         [_single_row("001", MAIN, "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
-    result, _out, journal_path = _run(tmp_path, "fresh", table, ledger)
+    result, _out, journal_path = _run(tmp_path, "case-27", table, ledger)
     assert result.returncode == 0, result.stderr
     lines = journal_path.read_text(encoding="utf-8").splitlines()
     assert lines[0] == "JOB FRESH-JOURNAL"
@@ -538,7 +545,7 @@ def test_journal_keeps_existing_lines_and_appends_new_ones(tmp_path):
         encoding="utf-8",
     )
     before = journal.read_bytes()
-    result, _out, journal_path = _run(tmp_path, "append", table, ledger, journal=journal)
+    result, _out, journal_path = _run(tmp_path, "case-28", table, ledger, journal=journal)
     assert result.returncode == 0, result.stderr
     after = journal_path.read_bytes()
     assert after.startswith(before)
@@ -557,7 +564,7 @@ def test_journal_lines_match_the_list_entries(tmp_path):
             _single_row("002", MAIN, "01:10:00:00", "01:10:02:12", "02:00:05:00", "02:00:07:12"),
         ],
     )
-    result, out, journal_path = _run(tmp_path, "journal-match", table, ledger)
+    result, out, journal_path = _run(tmp_path, "case-29", table, ledger)
     assert result.returncode == 0, result.stderr
     entries = _list_of(out)["entries"]
     rows = [line.split("\t") for line in journal_path.read_text(encoding="utf-8").splitlines()[1:]]
@@ -587,7 +594,7 @@ def test_rejects_a_journal_kept_for_another_editing_table(tmp_path):
     journal = tmp_path / "other-journal.tsv"
     journal.write_text("JOB 0707A-PROMO-CUT2\n", encoding="utf-8")
     before = journal.read_bytes()
-    result, out, journal_path = _run(tmp_path, "other", table, ledger, journal=journal)
+    result, out, journal_path = _run(tmp_path, "case-30", table, ledger, journal=journal)
     assert result.returncode != 0
     assert not out.exists()
     assert journal_path.read_bytes() == before
@@ -602,10 +609,10 @@ def test_rejects_a_journal_line_with_the_wrong_column_count(tmp_path):
         "NON-DROP-FRAME",
         [_single_row("001", MAIN, "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
-    journal = tmp_path / "bad-columns-journal.tsv"
+    journal = tmp_path / "case-journal-a.tsv"
     journal.write_text("JOB BAD-COLUMNS\n001\tC012K004_260702_R1A\t01:02:30:00\n", encoding="utf-8")
     before = journal.read_bytes()
-    result, out, journal_path = _run(tmp_path, "bad-columns", table, ledger, journal=journal)
+    result, out, journal_path = _run(tmp_path, "case-31", table, ledger, journal=journal)
     assert result.returncode != 0
     assert not out.exists()
     assert journal_path.read_bytes() == before
@@ -620,13 +627,13 @@ def test_rejects_a_journal_line_with_an_unreadable_timecode(tmp_path):
         "NON-DROP-FRAME",
         [_single_row("001", MAIN, "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
-    journal = tmp_path / "bad-timecode-journal.tsv"
+    journal = tmp_path / "case-journal-b.tsv"
     journal.write_text(
         "JOB BAD-TIMECODE\n001\tC012K004_260702_R1A\t01:02:30;00\t01:02:35:00\t02:00:00:00\t02:00:05:00\t5.000000\n",
         encoding="utf-8",
     )
     before = journal.read_bytes()
-    result, out, journal_path = _run(tmp_path, "bad-timecode", table, ledger, journal=journal)
+    result, out, journal_path = _run(tmp_path, "case-32", table, ledger, journal=journal)
     assert result.returncode != 0
     assert not out.exists()
     assert journal_path.read_bytes() == before
@@ -641,13 +648,13 @@ def test_rejects_a_journal_line_with_a_broken_duration(tmp_path):
         "NON-DROP-FRAME",
         [_single_row("001", MAIN, "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
-    journal = tmp_path / "bad-seconds-journal.tsv"
+    journal = tmp_path / "case-journal-c.tsv"
     journal.write_text(
         "JOB BAD-SECONDS\n001\tC012K004_260702_R1A\t01:02:30:00\t01:02:35:00\t02:00:00:00\t02:00:05:00\t5.0\n",
         encoding="utf-8",
     )
     before = journal.read_bytes()
-    result, out, journal_path = _run(tmp_path, "bad-seconds", table, ledger, journal=journal)
+    result, out, journal_path = _run(tmp_path, "case-33", table, ledger, journal=journal)
     assert result.returncode != 0
     assert not out.exists()
     assert journal_path.read_bytes() == before
@@ -662,7 +669,7 @@ def test_rejects_event_referencing_unknown_reel(tmp_path):
         "NON-DROP-FRAME",
         [_single_row("001", PAL_REEL, "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
-    result, out, _journal = _run(tmp_path, "unknown-reel", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-34", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
 
@@ -677,7 +684,7 @@ def test_rejects_ledger_entry_with_an_extra_field(tmp_path):
         "NON-DROP-FRAME",
         [_single_row("001", MAIN, "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
-    result, out, _journal = _run(tmp_path, "ledger-extra", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-35", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
 
@@ -692,7 +699,7 @@ def test_rejects_ledger_entry_missing_a_field(tmp_path):
         "NON-DROP-FRAME",
         [_single_row("001", MAIN, "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
-    result, out, _journal = _run(tmp_path, "ledger-missing", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-36", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
 
@@ -706,7 +713,7 @@ def test_rejects_drop_frame_basis_on_an_integer_rate(tmp_path):
         "NON-DROP-FRAME",
         [_single_row("001", PAL_REEL, "02:20:00;00", "02:20:05;00", "02:00:00:00", "02:00:05:00")],
     )
-    result, out, _journal = _run(tmp_path, "pal-drop-bad", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-37", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
 
@@ -720,7 +727,7 @@ def test_rejects_non_drop_reel_whose_start_timecode_has_a_semicolon(tmp_path):
         "NON-DROP-FRAME",
         [_single_row("001", MAIN, "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
-    result, out, _journal = _run(tmp_path, "start-mark-bad", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-38", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
 
@@ -734,7 +741,7 @@ def test_rejects_timecode_column_with_a_semicolon_in_editing_table(tmp_path):
         "NON-DROP-FRAME",
         [_single_row("001", MAIN, "01:02:30;00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
-    result, out, _journal = _run(tmp_path, "colon-bad", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-39", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
 
@@ -748,38 +755,38 @@ def test_rejects_timecode_field_out_of_range(tmp_path):
         "NON-DROP-FRAME",
         [_single_row("001", MAIN, "01:02:30:00", "01:02:60:00", "02:00:00:00", "02:00:30:00")],
     )
-    result, out, _journal = _run(tmp_path, "range-bad", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-40", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
 
 
 def test_rejects_frame_number_equal_to_nominal_rate(tmp_path):
-    """题面「四个时码写成 HH:MM:SS:FF」：帧位等于每秒整格数时越界。"""
-    ledger = {MAIN: _flat_reel(NON_DROP, "01:00:00:00", 500000)}
+    """帧位正好等于每秒格数时也必须退回，不能当成下一格。"""
+    ledger = {FLAT_REEL: _flat_reel(NON_DROP, "01:00:00:00", 1000)}
     table = _table(
-        "FRAME-EQUAL-RATE",
+        "FRAME-EQ",
         FLAT24_TABLE,
         "NON-DROP-FRAME",
-        [_single_row("001", MAIN, "01:02:30:24", "01:02:35:24", "02:00:00:00", "02:00:05:00")],
+        [_single_row("001", FLAT_REEL, "01:00:00:24", "01:00:01:24", "01:00:00:00", "01:00:01:00")],
     )
-    result, out, _journal = _run(tmp_path, "frame-equal-rate", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-41", table, ledger)
     assert result.returncode != 0
+    assert result.stderr.startswith("套底清单没能生成: ")
     assert not out.exists()
 
 
-def test_rejects_zero_timeline_rate_without_traceback(tmp_path):
-    """题面「时间线声明的帧率分子为零」：按数据不合规退回，不以异常栈收场。"""
-    ledger = {MAIN: _flat_reel(NON_DROP, "01:00:00:00", 500000)}
+def test_rejects_zero_timeline_rate(tmp_path):
+    """时间线帧率为零时按非法输入退回，不能继续算下去。"""
+    ledger = {FLAT_REEL: _flat_reel(NON_DROP, "01:00:00:00", 1000)}
     table = _table(
-        "ZERO-TIMELINE-RATE",
+        "RATE-ZERO",
         "0/1",
         "NON-DROP-FRAME",
-        [_single_row("001", MAIN, "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
+        [_single_row("001", FLAT_REEL, "01:00:00:00", "01:00:00:01", "01:00:00:00", "01:00:00:01")],
     )
-    result, out, _journal = _run(tmp_path, "zero-timeline-rate", table, ledger)
-    assert result.returncode != 0
-    assert "帧率" in result.stderr
-    assert "Traceback" not in result.stderr
+    result, out, _journal = _run(tmp_path, "case-42", table, ledger)
+    assert result.returncode == 1
+    assert result.stderr.startswith("套底清单没能生成: 时间线的帧率要是正数")
     assert not out.exists()
 
 
@@ -792,7 +799,7 @@ def test_rejects_timecode_the_device_never_writes(tmp_path):
         "DROP-FRAME",
         [_single_row("001", MAIN, "01:06:00;01", "01:06:10;01", "01:00:00;00", "01:00:10;00")],
     )
-    result, out, _journal = _run(tmp_path, "ghost-frame", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-43", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
 
@@ -805,7 +812,7 @@ def test_rejects_event_line_with_extra_column(tmp_path):
         "TIMELINE %s NON-DROP-FRAME\n"
         "001  %s  C  01:02:30:00  01:02:35:00  02:00:00:00  02:00:05:00  DISSOLVE\n"
     ) % (FLAT24_TABLE, MAIN)
-    result, out, _journal = _run(tmp_path, "extra-column", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-44", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
 
@@ -822,7 +829,7 @@ def test_rejects_duplicate_event_number(tmp_path):
             _single_row("001", MAIN, "01:10:00:00", "01:10:02:12", "02:00:05:00", "02:00:07:12"),
         ],
     )
-    result, out, _journal = _run(tmp_path, "dup-number", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-45", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
 
@@ -836,7 +843,7 @@ def test_rejects_transition_other_than_cut(tmp_path):
         "NON-DROP-FRAME",
         [("001", MAIN, "D", "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
-    result, out, _journal = _run(tmp_path, "transition-bad", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-46", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
 
@@ -850,7 +857,7 @@ def test_rejects_event_beyond_reel_length(tmp_path):
         "NON-DROP-FRAME",
         [_single_row("001", MAIN, "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
-    result, out, _journal = _run(tmp_path, "too-long", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-47", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
 
@@ -859,7 +866,7 @@ def test_rejects_editing_table_without_events(tmp_path):
     """题面「一份剪辑表至少要有一条事件」：只有表头的剪辑表整份退回。"""
     ledger = {MAIN: _flat_reel(NON_DROP, "01:00:00:00", 500000)}
     table = _table("EMPTY-TABLE", FLAT24_TABLE, "NON-DROP-FRAME", [])
-    result, out, _journal = _run(tmp_path, "empty-table", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-48", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
 
@@ -889,7 +896,7 @@ def test_rejects_unreadable_timecode_text(tmp_path):
         "NON-DROP-FRAME",
         [_single_row("001", MAIN, "01:02:3a:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
-    result, out, _journal = _run(tmp_path, "text-bad", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-49", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
 
@@ -903,6 +910,6 @@ def test_rejects_unknown_timecode_basis_word(tmp_path):
         "PULL-DOWN",
         [_single_row("001", MAIN, "01:02:30:00", "01:02:35:00", "02:00:00:00", "02:00:05:00")],
     )
-    result, out, _journal = _run(tmp_path, "basis-bad", table, ledger)
+    result, out, _journal = _run(tmp_path, "case-50", table, ledger)
     assert result.returncode != 0
     assert not out.exists()
